@@ -1,0 +1,57 @@
+{
+  "benchmark": "synthetic-release-safety-corpus-v1",
+  "case_count": 4,
+  "cases": [
+    {
+      "evidenceroll_correct": true,
+      "evidenceroll_stage": "promoted",
+      "expected_stage": "promoted",
+      "final_action": "promote",
+      "http_only_correct": true,
+      "http_only_stage": "promoted",
+      "reason_codes": [
+        "CANARY_EVIDENCE_PASSED"
+      ],
+      "scenario": "healthy"
+    },
+    {
+      "evidenceroll_correct": true,
+      "evidenceroll_stage": "rolled_back",
+      "expected_stage": "rolled_back",
+      "final_action": "rollback",
+      "http_only_correct": false,
+      "http_only_stage": "promoted",
+      "reason_codes": [
+        "ACCURACY_NON_INFERIORITY_FAILED"
+      ],
+      "scenario": "regressed"
+    },
+    {
+      "evidenceroll_correct": true,
+      "evidenceroll_stage": "shadow",
+      "expected_stage": "shadow",
+      "final_action": "hold",
+      "http_only_correct": false,
+      "http_only_stage": "promoted",
+      "reason_codes": [
+        "INSUFFICIENT_LABELS"
+      ],
+      "scenario": "missing-feedback"
+    },
+    {
+      "evidenceroll_correct": true,
+      "evidenceroll_stage": "shadow",
+      "expected_stage": "shadow",
+      "final_action": "hold",
+      "http_only_correct": false,
+      "http_only_stage": "promoted",
+      "reason_codes": [
+        "FEATURE_DRIFT_BREACH"
+      ],
+      "scenario": "covariate-shift"
+    }
+  ],
+  "disclaimer": "These authored scenarios validate controller behaviour; they do not measure real-world model quality or superiority over another product.",
+  "evidenceroll_correct": 4,
+  "http_only_correct": 1
+}

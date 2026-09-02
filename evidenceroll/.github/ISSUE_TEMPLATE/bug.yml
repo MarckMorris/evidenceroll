@@ -1,0 +1,30 @@
+name: Bug report
+description: Report reproducible incorrect behavior without sensitive data
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, customer features, labels, or private model artifacts.
+  - type: input
+    id: version
+    attributes: {label: Version, placeholder: "0.1.0"}
+    validations: {required: true}
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options: [Local Python, Docker Compose, Kubernetes, Other]
+    validations: {required: true}
+  - type: textarea
+    id: reproduction
+    attributes: {label: Minimal reproduction}
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes: {label: Expected and actual result}
+    validations: {required: true}
+  - type: textarea
+    id: evidence
+    attributes: {label: Redacted evidence and logs}
+
