@@ -1,0 +1,11 @@
+apiVersion: 1
+providers:
+  - name: EvidenceRoll
+    orgId: 1
+    folder: EvidenceRoll
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards
+

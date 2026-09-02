@@ -1,0 +1,28 @@
+groups:
+  - name: evidenceroll-release-safety
+    rules:
+      - alert: EvidenceRollFeatureDriftBreach
+        expr: evidenceroll_max_feature_psi > 0.35
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Release evidence exceeds the configured PSI guardrail"
+          description: "Inspect the feature profile and keep the release on hold. PSI is a warning signal, not proof of concept drift."
+      - alert: EvidenceRollLabelCoverageLow
+        expr: evidenceroll_label_coverage_ratio < 0.70
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Delayed-label coverage remains below the release requirement"
+          description: "Check the feedback ingestion SLA before changing the policy floor."
+      - alert: EvidenceRollRollback
+        expr: evidenceroll_release_stage{stage="rolled_back"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "EvidenceRoll rolled back an ML release"
+          description: "Follow docs/runbooks/model-regression.md and verify the audit-chain head."
+

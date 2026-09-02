@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: evidenceroll-release-gate
+spec:
+  args:
+    - name: release-id
+    - name: evidenceroll-url
+      value: http://evidenceroll:8080
+  metrics:
+    - name: evidence-sufficiency
+      interval: 30s
+      count: 20
+      failureLimit: 1
+      consecutiveSuccessLimit: 1
+      successCondition: result.status == "Successful"
+      failureCondition: result.status == "Failed"
+      provider:
+        web:
+          url: "{{args.evidenceroll-url}}/v1/argo/releases/{{args.release-id}}/analysis"
+          jsonPath: "{$}"

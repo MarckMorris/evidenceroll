@@ -1,0 +1,20 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "panels": [
+    {"id": 1, "type": "stat", "title": "Current label coverage", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0}, "targets": [{"expr": "max(evidenceroll_label_coverage_ratio)", "legendFormat": "coverage"}], "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}}},
+    {"id": 2, "type": "stat", "title": "Maximum feature PSI", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0}, "targets": [{"expr": "max(evidenceroll_max_feature_psi)", "legendFormat": "PSI"}]},
+    {"id": 3, "type": "stat", "title": "Rollback releases", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0}, "targets": [{"expr": "sum(evidenceroll_release_stage{stage=\"rolled_back\"})", "legendFormat": "rollbacks"}]},
+    {"id": 4, "type": "timeseries", "title": "Model adapter latency", "gridPos": {"h": 9, "w": 12, "x": 0, "y": 8}, "targets": [{"expr": "histogram_quantile(0.95, sum by (le, role) (rate(evidenceroll_model_inference_seconds_bucket[5m])))", "legendFormat": "p95 {{role}}"}], "fieldConfig": {"defaults": {"unit": "s"}}},
+    {"id": 5, "type": "timeseries", "title": "Release decisions", "gridPos": {"h": 9, "w": 12, "x": 12, "y": 8}, "targets": [{"expr": "sum by (action) (increase(evidenceroll_decisions_total[1h]))", "legendFormat": "{{action}}"}]}
+  ],
+  "schemaVersion": 41,
+  "tags": ["mlops", "progressive-delivery"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "browser",
+  "title": "EvidenceRoll release safety",
+  "uid": "evidenceroll",
+  "version": 1
+}
+

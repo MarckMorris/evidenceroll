@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EvidenceRoll control plane</title>
+  <style>
+    :root { color-scheme: dark; --bg:#080b12; --panel:#101622; --edge:#253149; --ink:#edf4ff; --muted:#94a3b8; --cyan:#22d3ee; --green:#34d399; --amber:#fbbf24; --red:#fb7185; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:radial-gradient(circle at 20% 0,#12213b 0,transparent 35%),var(--bg); color:var(--ink); font:15px/1.5 ui-sans-serif,system-ui,sans-serif; }
+    main { width:min(1180px,calc(100% - 32px)); margin:auto; padding:34px 0 60px; }
+    header { display:flex; gap:20px; align-items:end; justify-content:space-between; flex-wrap:wrap; margin-bottom:28px; }
+    h1 { margin:0; letter-spacing:-.04em; font-size:clamp(30px,5vw,52px); font-weight:650; }
+    h1 span { color:var(--cyan); }
+    .subtitle { color:var(--muted); max-width:680px; margin:6px 0 0; }
+    .controls { display:flex; gap:8px; flex-wrap:wrap; }
+    input,button { min-height:42px; border:1px solid var(--edge); border-radius:9px; font:inherit; }
+    input { background:#090e18; color:var(--ink); padding:0 12px; min-width:240px; }
+    button { cursor:pointer; background:var(--cyan); color:#031016; padding:0 16px; font-weight:700; }
+    button.secondary { background:transparent; color:var(--ink); }
+    .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:14px; }
+    .panel { background:color-mix(in srgb,var(--panel) 94%,transparent); border:1px solid var(--edge); border-radius:14px; padding:18px; }
+    .release { grid-column:span 12; }
+    .metric { grid-column:span 3; min-height:125px; }
+    .evidence { grid-column:span 7; }
+    .reasons { grid-column:span 5; }
+    .audit { grid-column:span 12; overflow:hidden; }
+    .label { color:var(--muted); text-transform:uppercase; letter-spacing:.11em; font-size:11px; font-weight:700; }
+    .value { font-size:28px; font-weight:650; margin-top:12px; font-variant-numeric:tabular-nums; }
+    .stage { display:flex; align-items:center; gap:10px; font-size:27px; font-weight:650; text-transform:uppercase; }
+    .dot { width:11px; height:11px; border-radius:50%; background:var(--amber); box-shadow:0 0 16px currentColor; }
+    .stage[data-stage="promoted"] .dot { background:var(--green); }
+    .stage[data-stage="rolled_back"] .dot { background:var(--red); }
+    .track { display:grid; grid-template-columns:repeat(4,1fr); margin-top:24px; position:relative; gap:8px; }
+    .track:before { content:""; position:absolute; left:8%; right:8%; top:8px; height:2px; background:var(--edge); }
+    .step { position:relative; color:var(--muted); padding-top:25px; font-size:12px; text-align:center; }
+    .step:before { content:""; position:absolute; top:3px; left:calc(50% - 6px); width:12px; height:12px; border-radius:50%; background:var(--edge); }
+    .step.active { color:var(--ink); }
+    .step.active:before { background:var(--cyan); box-shadow:0 0 12px var(--cyan); }
+    dl { display:grid; grid-template-columns:1fr auto; margin:10px 0 0; gap:8px 20px; }
+    dt { color:var(--muted); } dd { margin:0; font-variant-numeric:tabular-nums; }
+    ul { padding-left:20px; margin-bottom:0; } li { margin:8px 0; }
+    table { width:100%; border-collapse:collapse; margin-top:12px; }
+    th,td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--edge); white-space:nowrap; }
+    th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+    code { color:var(--cyan); }
+    .empty { color:var(--muted); padding:32px 0; text-align:center; }
+    .error { color:var(--red); margin-top:10px; }
+    @media(max-width:800px){ .metric{grid-column:span 6}.evidence,.reasons{grid-column:span 12} }
+    @media(max-width:480px){ main{width:min(100% - 20px,1180px)}.metric{grid-column:span 12}.controls,input{width:100%} }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1>Evidence<span>Roll</span></h1><p class="subtitle">A release is not healthy merely because nothing failed. Promotion requires fresh, sufficient evidence.</p></div>
+    <div class="controls"><input id="releaseId" aria-label="Release ID" placeholder="release id"><button id="load">Load</button><button id="reconcile" class="secondary">Reconcile</button></div>
+  </header>
+  <div id="error" class="error" role="alert"></div>
+  <section class="grid" aria-live="polite">
+    <article class="panel release">
+      <div class="label">Active release</div><div class="stage" id="stage"><span class="dot"></span><span id="stageText">Not loaded</span></div>
+      <div class="track"><div class="step" data-step="shadow">Shadow</div><div class="step" data-step="canary">Canary</div><div class="step" data-step="promoted">Promoted</div><div class="step" data-step="rolled_back">Rolled back</div></div>
+    </article>
+    <article class="panel metric"><div class="label">Predictions</div><div class="value" id="predictions">—</div></article>
+    <article class="panel metric"><div class="label">Label coverage</div><div class="value" id="coverage">—</div></article>
+    <article class="panel metric"><div class="label">Max feature PSI</div><div class="value" id="psi">—</div></article>
+    <article class="panel metric"><div class="label">Accuracy delta</div><div class="value" id="accuracy">—</div></article>
+    <article class="panel evidence"><div class="label">Evidence</div><dl id="metrics"></dl></article>
+    <article class="panel reasons"><div class="label">Current verdict</div><div class="value" id="action">—</div><ul id="reasons"><li class="empty">Load a release</li></ul></article>
+    <article class="panel audit"><div class="label">Decision audit chain</div><div id="audit" class="empty">No release loaded</div></article>
+  </section>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  const fmt = value => value == null ? '—' : Number(value).toFixed(4);
+  function headers(){ const key=localStorage.getItem('evidenceroll-key'); return key?{'X-EvidenceRoll-Key':key}:{}; }
+  async function json(url, options={}) { const response=await fetch(url,{...options,headers:{'Content-Type':'application/json',...headers(),...(options.headers||{})}}); if(!response.ok) throw new Error((await response.json()).detail||response.statusText); return response.json(); }
+  async function load(){
+    $('error').textContent=''; const id=$('releaseId').value.trim(); if(!id) return;
+    try {
+      const [release,evidence,audit,integrity]=await Promise.all([json(`/v1/releases/${id}`),json(`/v1/releases/${id}/evidence`),json(`/v1/releases/${id}/audit`),json(`/v1/releases/${id}/audit-integrity`)]);
+      $('stage').dataset.stage=release.stage; $('stageText').textContent=release.stage.replace('_',' '); document.querySelectorAll('.step').forEach(x=>x.classList.toggle('active',x.dataset.step===release.stage));
+      $('predictions').textContent=evidence.prediction_count; $('coverage').textContent=`${(evidence.label_coverage*100).toFixed(1)}%`; $('psi').textContent=fmt(evidence.metrics.max_feature_psi); $('accuracy').textContent=fmt(evidence.metrics.accuracy_delta);
+      $('action').textContent=evidence.action.toUpperCase(); $('reasons').innerHTML=evidence.reason_codes.map(x=>`<li>${x}</li>`).join('')||'<li>None</li>';
+      const wanted=['challenger_accuracy','challenger_brier','disagreement_rate','challenger_p95_latency_ms','accuracy_delta_ci_lower']; $('metrics').innerHTML=wanted.map(k=>`<dt>${k.replaceAll('_',' ')}</dt><dd>${fmt(evidence.metrics[k])}</dd>`).join('');
+      $('audit').className=''; $('audit').innerHTML=`<p>Integrity: <strong>${integrity.valid?'valid':'FAILED'}</strong> · ${integrity.event_count} events · head <code>${integrity.last_hash.slice(0,16)}…</code></p><table><thead><tr><th>ID</th><th>Event</th><th>Created</th><th>Hash</th></tr></thead><tbody>${audit.slice(-8).reverse().map(e=>`<tr><td>${e.id}</td><td>${e.event_type}</td><td>${new Date(e.created_at).toLocaleString()}</td><td><code>${e.event_hash.slice(0,16)}…</code></td></tr>`).join('')}</tbody></table>`;
+    } catch(error){ $('error').textContent=error.message; }
+  }
+  $('load').addEventListener('click',load); $('releaseId').addEventListener('keydown',event=>{if(event.key==='Enter')load();});
+  $('reconcile').addEventListener('click',async()=>{ const id=$('releaseId').value.trim(); if(!id)return; try{await json(`/v1/releases/${id}/reconcile`,{method:'POST'}); await load();}catch(error){$('error').textContent=error.message;} });
+</script>
+</body>
+</html>

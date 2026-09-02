@@ -1,0 +1,59 @@
+name: evidenceroll
+
+services:
+  control-plane:
+    build: .
+    image: evidenceroll:local
+    environment:
+      EVIDENCEROLL_HOME: /var/lib/evidenceroll
+      EVIDENCEROLL_POLICY: /etc/evidenceroll/policy.yaml
+      EVIDENCEROLL_RECONCILE_INTERVAL_SECONDS: "15"
+    ports:
+      - "8080:8080"
+    volumes:
+      - evidenceroll-data:/var/lib/evidenceroll
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - control-plane
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: evidenceroll-local
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  evidenceroll-data:
+  prometheus-data:
+  grafana-data:
+

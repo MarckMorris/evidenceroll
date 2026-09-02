@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evidenceroll"
+version = "0.1.0"
+description = "Evidence-aware progressive delivery for ML models with delayed labels"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "Marck Morris"}]
+keywords = ["mlops", "machine-learning", "canary", "model-monitoring", "progressive-delivery"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "joblib>=1.4,<2",
+  "numpy>=2.0,<2.4",
+  "prometheus-client>=0.21,<1",
+  "pydantic>=2.11,<3",
+  "PyYAML>=6,<7",
+  "scikit-learn>=1.6,<2",
+  "uvicorn>=0.35,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2,<2",
+  "httpx2>=2.12,<3",
+  "mypy>=1.17,<2",
+  "pip-audit>=2.9,<3",
+  "pytest>=9.0.3,<10",
+  "pytest-cov>=6.2,<8",
+  "ruff>=0.12,<1",
+  "types-PyYAML>=6.0,<7",
+]
+
+[project.scripts]
+evidenceroll = "evidenceroll.cli:main"
+
+[project.urls]
+Repository = "https://github.com/MarckMorris/evidenceroll"
+Issues = "https://github.com/MarckMorris/evidenceroll/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+evidenceroll = ["static/*.html"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["joblib", "sklearn.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+markers = [
+  "integration: crosses component boundaries",
+  "contract: validates deployment or API contracts",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["evidenceroll"]
+omit = ["src/evidenceroll/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 88
+show_missing = true
+skip_covered = true

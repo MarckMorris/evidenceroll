@@ -1,0 +1,17 @@
+schema_version: 1
+policy_id: standard-v1
+evidence:
+  min_predictions: 120
+  min_labels: 90
+  min_label_coverage: 0.70
+  max_age_seconds: 86400
+proxy_gates:
+  max_feature_psi: 0.35
+  max_disagreement_rate: 0.45
+quality_gates:
+  non_inferiority_margin: 0.08
+  max_brier_regression: 0.03
+operational_gates:
+  max_challenger_p95_latency_ms: 75.0
+rollout:
+  initial_canary_weight: 10
