@@ -29,12 +29,14 @@ def snapshot(**overrides: object) -> EvidenceSnapshot:
         "disagreement_rate": 0.1,
         "accuracy_delta_ci_lower": -0.01,
         "brier_delta": -0.01,
+        "max_label_coverage_gap": 0.02,
     }
     metrics.update(overrides.pop("metrics", {}))  # type: ignore[arg-type]
     values = {
         "prediction_count": 150,
         "label_count": 120,
         "label_coverage": 0.8,
+        "label_coverage_segments": {"served_role:champion": 0.81, "served_role:challenger": 0.79},
         "latest_prediction_at": "2026-09-02T00:00:00+00:00",
         "latest_feedback_at": "2026-09-02T00:00:05+00:00",
         "evidence_age_seconds": 10.0,
@@ -76,6 +78,26 @@ def snapshot(**overrides: object) -> EvidenceSnapshot:
             "MODEL_DISAGREEMENT_BREACH",
             DecisionAction.HOLD,
         ),
+        (
+            {"metrics": {"max_label_coverage_gap": 0.6}},
+            "BIASED_LABEL_MISSINGNESS",
+            DecisionAction.HOLD,
+        ),
+        (
+            {"label_coverage_segments": {"served_role:champion": 0.8}},
+            "LABEL_MISSINGNESS_UNVERIFIED",
+            DecisionAction.HOLD,
+        ),
+        (
+            {"metrics": {"accuracy_delta_ci_lower": None}},
+            "QUALITY_EVIDENCE_UNAVAILABLE",
+            DecisionAction.HOLD,
+        ),
+        (
+            {"metrics": {"brier_delta": None}},
+            "QUALITY_EVIDENCE_UNAVAILABLE",
+            DecisionAction.HOLD,
+        ),
     ],
 )
 def test_fail_closed_policy_branches(
@@ -87,6 +109,48 @@ def test_fail_closed_policy_branches(
     report = decide(release(), snapshot(**change), Policy.from_yaml(policy_path))
     assert report.action is action
     assert reason in report.reason_codes
+
+
+@pytest.mark.parametrize("absent", ["accuracy_delta_ci_lower", "brier_delta"])
+def test_missing_quality_metric_can_never_promote(policy_path: Path, absent: str) -> None:
+    """A minimum-style gate must block when its metric is absent, not pass by default."""
+    for stage in (ReleaseStage.SHADOW, ReleaseStage.CANARY):
+        report = decide(
+            release(stage),
+            snapshot(metrics={absent: None}),
+            Policy.from_yaml(policy_path),
+        )
+        assert report.action is DecisionAction.HOLD
+        assert "QUALITY_EVIDENCE_UNAVAILABLE" in report.reason_codes
+
+
+def test_selective_feedback_blocks_promotion(policy_path: Path) -> None:
+    """Labels that arrive for one cohort and not the other measure missingness, not quality."""
+    report = decide(
+        release(ReleaseStage.CANARY),
+        snapshot(
+            label_coverage_segments={
+                "served_role:champion": 0.95,
+                "served_role:challenger": 0.40,
+            },
+            metrics={"max_label_coverage_gap": 0.55},
+        ),
+        Policy.from_yaml(policy_path),
+    )
+    assert report.action is DecisionAction.HOLD
+    assert "BIASED_LABEL_MISSINGNESS" in report.reason_codes
+
+
+def test_missingness_check_can_be_disabled_explicitly(policy_path: Path) -> None:
+    payload = Policy.from_yaml(policy_path).model_dump()
+    payload["evidence"]["max_label_coverage_gap"] = 1.0
+    disabled = Policy.model_validate(payload)
+    report = decide(
+        release(),
+        snapshot(label_coverage_segments={}, metrics={"max_label_coverage_gap": None}),
+        disabled,
+    )
+    assert report.action is DecisionAction.START_CANARY
 
 
 def test_canary_proxy_breach_rolls_back(policy_path: Path) -> None:

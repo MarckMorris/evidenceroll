@@ -5,6 +5,14 @@ evidence:
   min_labels: 90
   min_label_coverage: 0.70
   max_age_seconds: 86400
+  # Widest tolerated label-coverage gap between two readable segments (served role, predicted
+  # class, or a reference-profile feature bin). Below two readable segments, or a gap above this
+  # value, holds with LABEL_MISSINGNESS_UNVERIFIED / BIASED_LABEL_MISSINGNESS. Set to 1.0 to
+  # disable the check (see docs/adr — selective feedback biases the measured release delta).
+  max_label_coverage_gap: 0.25
+  # A segment needs at least this many predictions before its coverage is reported; smaller
+  # segments are too noisy to gate on.
+  min_segment_predictions: 30
 proxy_gates:
   max_feature_psi: 0.35
   max_disagreement_rate: 0.45

@@ -98,6 +98,7 @@ class EvidenceResponse(BaseModel):
     prediction_count: int
     label_count: int
     label_coverage: float
+    label_coverage_segments: dict[str, float]
     latest_prediction_at: str | None
     latest_feedback_at: str | None
     evidence_age_seconds: float | None

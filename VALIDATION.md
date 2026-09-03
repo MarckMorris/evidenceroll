@@ -1,8 +1,9 @@
 # Validation Record
 
-**Release:** `0.1.0`  
-**Validation date:** 2026-09-02  
-**Primary clean environment:** CPython 3.12.13 on Linux
+**Release:** `0.1.0` plus unreleased fixes (async shadow scoring, fail-closed quality gates,
+label-missingness gate — see [CHANGELOG.md](CHANGELOG.md))  
+**Validation date:** 2026-09-03  
+**Primary clean environment:** CPython 3.12 on Linux
 
 This record distinguishes tests that were executed locally from checks delegated to CI or a target
 cluster. The synthetic corpus verifies controller behavior only; it is not a throughput, business,
@@ -16,15 +17,15 @@ or real-world model-quality benchmark.
 | Ruff lint | no findings |
 | Ruff format check | all files formatted |
 | strict mypy, Python 3.10 language target | no issues in 16 source files |
-| pytest unit, integration, contract, and failure scenarios | 63 passed |
-| branch-aware coverage | 89.30%; required floor 88% |
+| pytest unit, integration, contract, and failure scenarios | 82 passed |
+| branch-aware coverage | 90.11%; required floor 88% |
 | dependency audit in isolated project environment | no known vulnerabilities |
 | PEP 517 isolated sdist and wheel build | passed |
 | fresh wheel-only installation | passed |
 | installed-wheel healthy scenario | `shadow -> canary -> promoted`; audit valid |
 | live installed-wheel HTTP smoke test | health, readiness, create, inference, idempotent replay, feedback, evidence, Argo, audit, and metrics passed |
 | shell syntax | passed for `acceptance.sh` and `verify.sh` |
-| deterministic safety corpus | EvidenceRoll 4/4; HTTP-health-only baseline 1/4 |
+| deterministic safety corpus | EvidenceRoll 5/5; HTTP-health-only baseline 1/5 |
 
 The detailed authored-corpus output is stored in
 [`evidence/benchmark-results.json`](evidence/benchmark-results.json).
@@ -41,7 +42,12 @@ The detailed authored-corpus output is stored in
 - dynamic registry feature schemas and reference-profile lineage;
 - generic HTTP and KServe V2 request/response adapters;
 - API authentication, validation, error mapping, telemetry, and dashboard delivery;
-- Kubernetes, Argo, Compose, alert, and Grafana asset structure.
+- Kubernetes, Argo, Compose, alert, and Grafana asset structure;
+- background shadow scoring, pending/failed-pair exclusion from evidence, and legacy-database
+  migration to the nullable predictions schema;
+- fail-closed behavior when a quality metric is unavailable (`QUALITY_EVIDENCE_UNAVAILABLE`);
+- per-segment label-coverage gate on selective feedback (`BIASED_LABEL_MISSINGNESS`,
+  `LABEL_MISSINGNESS_UNVERIFIED`).
 
 ## Environment-limited checks
 

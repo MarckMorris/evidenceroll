@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -107,3 +108,48 @@ def test_missing_objects_are_not_silently_created(tmp_path: Path) -> None:
         store.get_release("missing")
     with pytest.raises(NotFoundError):
         store.add_feedback("missing", 1)
+
+
+def test_legacy_database_is_migrated_to_nullable_shadow_columns(tmp_path: Path) -> None:
+    """A 0.1.0 database keeps its rows when the pending-shadow columns are introduced."""
+    database = tmp_path / "legacy.db"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        CREATE TABLE releases (
+            id TEXT PRIMARY KEY, champion_version TEXT NOT NULL,
+            challenger_version TEXT NOT NULL, stage TEXT NOT NULL,
+            canary_weight INTEGER NOT NULL, created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL, last_decision TEXT, revision INTEGER NOT NULL);
+        CREATE TABLE predictions (
+            id TEXT PRIMARY KEY, release_id TEXT NOT NULL REFERENCES releases(id),
+            entity_id TEXT NOT NULL, observed_at TEXT NOT NULL, release_stage TEXT NOT NULL,
+            features_json TEXT NOT NULL, served_version TEXT NOT NULL,
+            champion_score REAL NOT NULL, challenger_score REAL NOT NULL,
+            champion_prediction INTEGER NOT NULL, challenger_prediction INTEGER NOT NULL,
+            champion_latency_ms REAL NOT NULL, challenger_latency_ms REAL NOT NULL,
+            request_hash TEXT NOT NULL);
+        CREATE TABLE feedback (
+            prediction_id TEXT PRIMARY KEY REFERENCES predictions(id),
+            label INTEGER NOT NULL CHECK(label IN (0, 1)), observed_at TEXT NOT NULL);
+        INSERT INTO releases VALUES
+            ('rel-legacy', 'champion', 'challenger', 'shadow', 0,
+             '2026-09-02T12:00:00+00:00', '2026-09-02T12:00:00+00:00', NULL, 0);
+        INSERT INTO predictions VALUES
+            ('pred-legacy', 'rel-legacy', 'customer-1', '2026-09-02T12:00:00+00:00', 'shadow',
+             '{"x":1.0}', 'champion', 0.2, 0.3, 0, 0, 1.0, 1.2, 'hash-legacy');
+        INSERT INTO feedback VALUES ('pred-legacy', 1, '2026-09-02T12:30:00+00:00');
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    store = SQLiteStore(database)
+    stored = store.get_prediction("pred-legacy")
+    assert stored is not None
+    assert stored["pending_role"] is None
+    assert stored["challenger_score"] == 0.3
+    assert len(store.observations("rel-legacy", ReleaseStage.SHADOW)) == 1
+
+    with pytest.raises(NotFoundError):
+        store.complete_shadow_score("pred-legacy", "challenger", 0.4, 0, 1.0)

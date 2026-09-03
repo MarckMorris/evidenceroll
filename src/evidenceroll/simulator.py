@@ -16,7 +16,13 @@ from evidenceroll.schemas import FeatureVector
 from evidenceroll.service import EvidenceRollService
 from evidenceroll.store import SQLiteStore
 
-SCENARIOS = ("healthy", "regressed", "missing-feedback", "covariate-shift")
+SCENARIOS = (
+    "healthy",
+    "regressed",
+    "missing-feedback",
+    "covariate-shift",
+    "biased-feedback",
+)
 
 
 def run_scenario(
@@ -44,6 +50,7 @@ def run_scenario(
 
     shifted = scenario == "covariate-shift"
     include_feedback = scenario != "missing-feedback"
+    biased_feedback = scenario == "biased-feedback"
     _ingest_batch(
         service,
         release.id,
@@ -51,6 +58,7 @@ def run_scenario(
         seed=8001,
         shifted=shifted,
         include_feedback=include_feedback,
+        biased_feedback=biased_feedback,
     )
     report, release = service.reconcile(release.id)
     decisions.append(report.to_dict())
@@ -82,6 +90,7 @@ def run_benchmark(policy_path: Path, batch_size: int = 240) -> dict[str, Any]:
         "regressed": "rolled_back",
         "missing-feedback": "shadow",
         "covariate-shift": "shadow",
+        "biased-feedback": "shadow",
     }
     cases: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="evidenceroll-benchmark-") as temporary:
@@ -130,7 +139,13 @@ def _ingest_batch(
     seed: int,
     shifted: bool,
     include_feedback: bool,
+    biased_feedback: bool = False,
 ) -> None:
+    """Send a paired batch and, when asked, return labels only for part of the population.
+
+    `biased_feedback` keeps aggregate coverage above the policy floor while starving one
+    predicted class, which is the shape real selective feedback usually takes.
+    """
     values, labels = generate_churn_batch(size, seed=seed, covariate_shift=shifted)
     pending: list[tuple[str, int]] = []
     for index, (row, label) in enumerate(zip(values, labels, strict=True)):
@@ -139,6 +154,8 @@ def _ingest_batch(
             entity_id=f"customer-{seed}-{index}",
             features=FeatureVector.model_validate(as_feature_dict(row)),
         )
+        if biased_feedback and response.prediction == 1 and index % 5 != 0:
+            continue
         pending.append((response.prediction_id, int(label)))
     if include_feedback:
         for prediction_id, label in pending:

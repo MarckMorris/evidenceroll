@@ -15,6 +15,8 @@ class EvidencePolicy(BaseModel):
     min_labels: int = Field(ge=1)
     min_label_coverage: float = Field(gt=0.0, le=1.0)
     max_age_seconds: int = Field(ge=1)
+    max_label_coverage_gap: float = Field(default=0.25, ge=0.0, le=1.0)
+    min_segment_predictions: int = Field(default=30, ge=1)
 
     @model_validator(mode="after")
     def labels_cannot_exceed_predictions(self) -> EvidencePolicy:

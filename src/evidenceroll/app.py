@@ -53,6 +53,8 @@ class AppSettings:
             "true",
             "yes",
         }
+        self.shadow_scoring = os.getenv("EVIDENCEROLL_SHADOW_SCORING", "background").lower()
+        self.shadow_workers = int(os.getenv("EVIDENCEROLL_SHADOW_WORKERS", "2"))
         self.api_key = os.getenv("EVIDENCEROLL_API_KEY")
         self.audit_hmac_key = os.getenv("EVIDENCEROLL_AUDIT_HMAC_KEY")
         self.reconcile_interval_seconds = float(
@@ -71,6 +73,8 @@ def build_service(settings: AppSettings) -> EvidenceRollService:
         registry=ModelRegistry(settings.registry_path),
         policy=Policy.from_yaml(settings.policy_path),
         telemetry=Telemetry(),
+        shadow_scoring=settings.shadow_scoring,
+        shadow_workers=settings.shadow_workers,
     )
 
 
@@ -96,6 +100,10 @@ def create_app(
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+            service = getattr(app.state, "service", None)
+            if service is not None:
+                service.flush_shadow(timeout=10.0)
+                service.close()
 
     app = FastAPI(
         title="EvidenceRoll",

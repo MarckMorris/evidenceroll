@@ -45,6 +45,24 @@ class Telemetry:
             ("release_id", "stage"),
             registry=self.registry,
         )
+        self.shadow_scores = Counter(
+            "evidenceroll_shadow_scores_total",
+            "Background scoring attempts for the model that did not answer the request.",
+            ("release_id", "role", "outcome"),
+            registry=self.registry,
+        )
+        self.incomplete_pairs = Gauge(
+            "evidenceroll_incomplete_pairs",
+            "Predictions excluded from evidence because one side is missing.",
+            ("release_id", "state"),
+            registry=self.registry,
+        )
+        self.label_coverage_gap = Gauge(
+            "evidenceroll_label_coverage_gap",
+            "Widest label-coverage difference between two readable evidence segments.",
+            ("release_id", "stage"),
+            registry=self.registry,
+        )
         self.max_feature_psi = Gauge(
             "evidenceroll_max_feature_psi",
             "Maximum feature PSI in the current evidence window.",

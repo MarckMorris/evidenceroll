@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -21,6 +23,10 @@ from evidenceroll.statistics import calculate_evidence
 from evidenceroll.store import IdempotencyConflictError, SQLiteStore, utc_now
 from evidenceroll.telemetry import Telemetry
 
+LOGGER = logging.getLogger(__name__)
+
+SHADOW_SCORING_MODES = ("inline", "background")
+
 
 class PredictionContractError(ValueError):
     """A prediction violates the active model or feature contract."""
@@ -33,12 +39,38 @@ class EvidenceRollService:
         registry: ModelRegistry,
         policy: Policy,
         telemetry: Telemetry | None = None,
+        shadow_scoring: str = "inline",
+        shadow_workers: int = 2,
     ) -> None:
+        if shadow_scoring not in SHADOW_SCORING_MODES:
+            raise ValueError(f"shadow_scoring must be one of {SHADOW_SCORING_MODES}")
         self.store = store
         self.registry = registry
         self.policy = policy
         self.telemetry = telemetry or Telemetry()
         self.gateway = ModelGateway(registry)
+        self.shadow_scoring = shadow_scoring
+        self._shadow_pool: ThreadPoolExecutor | None = (
+            ThreadPoolExecutor(max_workers=shadow_workers, thread_name_prefix="evidenceroll-shadow")
+            if shadow_scoring == "background"
+            else None
+        )
+        self._shadow_futures: set[Future[None]] = set()
+
+    def flush_shadow(self, timeout: float = 30.0) -> bool:
+        """Wait for in-flight background scoring. Returns False when work is still running."""
+        if self._shadow_pool is None:
+            return True
+        pending = set(self._shadow_futures)
+        if not pending:
+            return True
+        _, not_done = wait(pending, timeout=timeout)
+        return not not_done
+
+    def close(self) -> None:
+        if self._shadow_pool is not None:
+            self._shadow_pool.shutdown(wait=True)
+            self._shadow_pool = None
 
     @classmethod
     def from_paths(
@@ -101,25 +133,25 @@ class EvidenceRollService:
         values = np.asarray(
             [[features.root[name] for name in self.registry.feature_names]], dtype=float
         )
-        champion_score, champion_latency = self._score(
-            release.id, "champion", release.champion_version, values
-        )
-        challenger_score, challenger_latency = self._score(
-            release.id, "challenger", release.challenger_version, values
-        )
-        champion_prediction = int(champion_score >= 0.5)
-        challenger_prediction = int(challenger_score >= 0.5)
         served_role = self._served_role(release, entity_id)
-        if served_role == "challenger":
-            probability = challenger_score
-            prediction = challenger_prediction
-            served_version = release.challenger_version
-        else:
-            probability = champion_score
-            prediction = champion_prediction
-            served_version = release.champion_version
+        shadow_role = "champion" if served_role == "challenger" else "challenger"
+        served_version = (
+            release.challenger_version if served_role == "challenger" else release.champion_version
+        )
+        shadow_version = (
+            release.champion_version if served_role == "challenger" else release.challenger_version
+        )
+        probability, served_latency = self._score(release.id, served_role, served_version, values)
+        prediction = int(probability >= 0.5)
+        pair_wanted = release.stage in {ReleaseStage.SHADOW, ReleaseStage.CANARY}
 
         identifier = prediction_id or f"pred-{uuid4().hex}"
+        scores: dict[str, float | None] = {"champion": None, "challenger": None}
+        predictions: dict[str, int | None] = {"champion": None, "challenger": None}
+        latencies: dict[str, float | None] = {"champion": None, "challenger": None}
+        scores[served_role] = probability
+        predictions[served_role] = prediction
+        latencies[served_role] = served_latency
         record = PredictionRecord(
             id=identifier,
             release_id=release.id,
@@ -128,16 +160,19 @@ class EvidenceRollService:
             release_stage=release.stage,
             features=dict(features.root),
             served_version=served_version,
-            champion_score=champion_score,
-            challenger_score=challenger_score,
-            champion_prediction=champion_prediction,
-            challenger_prediction=challenger_prediction,
-            champion_latency_ms=champion_latency,
-            challenger_latency_ms=challenger_latency,
+            champion_score=scores["champion"],
+            challenger_score=scores["challenger"],
+            champion_prediction=predictions["champion"],
+            challenger_prediction=predictions["challenger"],
+            champion_latency_ms=latencies["champion"],
+            challenger_latency_ms=latencies["challenger"],
             request_hash=request_hash,
+            pending_role=shadow_role if pair_wanted else None,
         )
         self.store.add_prediction(record)
         self.telemetry.predictions.labels(release.id, release.stage.value, served_role).inc()
+        if pair_wanted:
+            self._submit_shadow(identifier, release.id, shadow_role, shadow_version, values)
         return PredictionResponse(
             prediction_id=identifier,
             prediction=prediction,
@@ -146,6 +181,44 @@ class EvidenceRollService:
             release_stage=release.stage.value,
             shadow_evaluated=release.stage in {ReleaseStage.SHADOW, ReleaseStage.CANARY},
         )
+
+    def _submit_shadow(
+        self,
+        prediction_id: str,
+        release_id: str,
+        role: str,
+        version: str,
+        values: np.ndarray,
+    ) -> None:
+        """Score the model that is not answering this request, outside the response path."""
+        if self._shadow_pool is None:
+            self._score_shadow(prediction_id, release_id, role, version, values)
+            return
+        future = self._shadow_pool.submit(
+            self._score_shadow, prediction_id, release_id, role, version, values
+        )
+        self._shadow_futures.add(future)
+        future.add_done_callback(self._shadow_futures.discard)
+
+    def _score_shadow(
+        self,
+        prediction_id: str,
+        release_id: str,
+        role: str,
+        version: str,
+        values: np.ndarray,
+    ) -> None:
+        try:
+            score, latency = self._score(release_id, role, version, values)
+            self.store.complete_shadow_score(prediction_id, role, score, int(score >= 0.5), latency)
+        except Exception as error:
+            self.telemetry.shadow_scores.labels(release_id, role, "failed").inc()
+            self.store.fail_shadow_score(prediction_id, f"{type(error).__name__}: {error}")
+            LOGGER.warning(
+                "shadow scoring failed for prediction %s (%s): %s", prediction_id, role, error
+            )
+            return
+        self.telemetry.shadow_scores.labels(release_id, role, "completed").inc()
 
     def add_feedback(self, prediction_id: str, label: int) -> bool:
         idempotent = self.store.add_feedback(prediction_id, label)
@@ -157,7 +230,12 @@ class EvidenceRollService:
     def evaluate(self, release_id: str) -> EvidenceReport:
         release = self.store.get_release(release_id)
         observations = self.store.observations(release_id, release.stage)
-        snapshot = calculate_evidence(observations, self.registry.reference_profile)
+        snapshot = calculate_evidence(
+            observations,
+            self.registry.reference_profile,
+            champion_version=release.champion_version,
+            min_segment_predictions=self.policy.evidence.min_segment_predictions,
+        )
         report = decide(release, snapshot, self.policy)
         self.telemetry.label_coverage.labels(release.id, release.stage.value).set(
             report.label_coverage
@@ -165,6 +243,12 @@ class EvidenceRollService:
         psi = report.metrics.get("max_feature_psi")
         if psi is not None:
             self.telemetry.max_feature_psi.labels(release.id, release.stage.value).set(psi)
+        gap = report.metrics.get("max_label_coverage_gap")
+        if gap is not None:
+            self.telemetry.label_coverage_gap.labels(release.id, release.stage.value).set(gap)
+        incomplete = self.store.incomplete_prediction_counts(release.id)
+        self.telemetry.incomplete_pairs.labels(release.id, "pending").set(incomplete["pending"])
+        self.telemetry.incomplete_pairs.labels(release.id, "failed").set(incomplete["failed"])
         return report
 
     def reconcile(self, release_id: str) -> tuple[EvidenceReport, Release]:

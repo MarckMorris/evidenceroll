@@ -7,6 +7,8 @@ import pytest
 
 from evidenceroll.statistics import (
     calculate_evidence,
+    label_coverage_by_segment,
+    label_coverage_gap,
     paired_accuracy_interval,
     population_stability_index,
 )
@@ -63,3 +65,44 @@ def test_evidence_freshness_uses_feedback_time_not_prediction_time() -> None:
 def test_invalid_paired_arrays_are_rejected() -> None:
     with pytest.raises(ValueError, match="non-empty"):
         paired_accuracy_interval(np.asarray([]), np.asarray([]))
+
+
+def test_label_coverage_by_segment_detects_selective_feedback() -> None:
+    profile = {"x": {"cut_points": [1.0], "proportions": [0.5, 0.5]}}
+    observations = [
+        {
+            "features": {"x": 0.5 if index % 2 == 0 else 1.5},
+            "champion_prediction": index % 2,
+            "challenger_prediction": index % 2,
+            "served_version": "champion" if index % 2 == 0 else "challenger",
+            "label": 1 if index % 2 == 0 else None,
+        }
+        for index in range(80)
+    ]
+    segments = label_coverage_by_segment(
+        observations,
+        profile,
+        champion_version="champion",
+        min_segment_predictions=30,
+    )
+    assert segments["served_role:champion"] == pytest.approx(1.0)
+    assert segments["served_role:challenger"] == pytest.approx(0.0)
+    assert label_coverage_gap(segments) == pytest.approx(1.0)
+
+
+def test_label_coverage_gap_is_undecidable_below_two_readable_segments() -> None:
+    assert label_coverage_gap({}) is None
+    assert label_coverage_gap({"served_role:champion": 0.9}) is None
+
+
+def test_small_segments_are_not_reported() -> None:
+    observations = [
+        {
+            "features": {},
+            "champion_prediction": 1,
+            "served_version": "champion",
+            "label": None,
+        }
+        for _ in range(5)
+    ]
+    assert label_coverage_by_segment(observations, {}, min_segment_predictions=30) == {}

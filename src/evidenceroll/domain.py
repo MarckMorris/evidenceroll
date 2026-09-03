@@ -41,6 +41,8 @@ class Release:
 
 @dataclass(frozen=True)
 class PredictionRecord:
+    """One request. The shadow side is null until background scoring completes."""
+
     id: str
     release_id: str
     entity_id: str
@@ -48,13 +50,15 @@ class PredictionRecord:
     release_stage: ReleaseStage
     features: dict[str, float]
     served_version: str
-    champion_score: float
-    challenger_score: float
-    champion_prediction: int
-    challenger_prediction: int
-    champion_latency_ms: float
-    challenger_latency_ms: float
+    champion_score: float | None
+    challenger_score: float | None
+    champion_prediction: int | None
+    challenger_prediction: int | None
+    champion_latency_ms: float | None
+    challenger_latency_ms: float | None
     request_hash: str
+    pending_role: str | None = None
+    shadow_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,7 @@ class EvidenceReport:
     prediction_count: int
     label_count: int
     label_coverage: float
+    label_coverage_segments: dict[str, float]
     latest_prediction_at: str | None
     latest_feedback_at: str | None
     evidence_age_seconds: float | None

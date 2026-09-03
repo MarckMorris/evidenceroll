@@ -60,8 +60,10 @@ def test_cli_writes_benchmark(
         )
         == 0
     )
-    assert json.loads(output.read_text(encoding="utf-8"))["evidenceroll_correct"] == 4
-    assert json.loads(capsys.readouterr().out)["case_count"] == 4
+    from evidenceroll.simulator import SCENARIOS
+
+    assert json.loads(output.read_text(encoding="utf-8"))["evidenceroll_correct"] == len(SCENARIOS)
+    assert json.loads(capsys.readouterr().out)["case_count"] == len(SCENARIOS)
 
 
 def test_cli_profiles_reference_csv(

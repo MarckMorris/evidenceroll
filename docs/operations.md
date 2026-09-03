@@ -10,6 +10,33 @@ The included Kubernetes baseline enforces this contract with one replica, `Recre
 `ReadWriteOnce` volume. Do not change the replica count without first implementing the PostgreSQL,
 lease, and multi-writer acceptance criteria in [ADR-003](adr/003-single-writer-store.md).
 
+## Shadow scoring mode
+
+`EVIDENCEROLL_SHADOW_SCORING` (`background` by default) controls whether the model that is not
+serving the caller is scored on a background thread pool (`background`, sized by
+`EVIDENCEROLL_SHADOW_WORKERS`, default `2`) or inline before the response is returned (`inline`).
+Keep `background` for any deployment where a challenger uses `generic_http` or `kserve_v2`: inline
+scoring makes the caller's latency include the full round trip to the model whose result they never
+see, which defeats the purpose of shadow evaluation. See
+[ADR-006](adr/006-shadow-scoring-runs-off-the-response-path.md).
+
+A prediction whose shadow side never completes (`pending_role` still set) or that failed permanently
+(`shadow_error` set) is excluded from every evidence window; it is not treated as either a pass or a
+regression. Watch `evidenceroll_incomplete_pairs{state="failed"}` per release — a sustained rise
+means a model adapter is failing and effective sample size is shrinking, even while the release
+appears otherwise healthy.
+
+## Reconciliation cadence and the false-rollback rate
+
+Each `reconcile()` call computes a fresh statistical test against the current evidence window.
+Calling it very frequently against a slowly growing window inflates the true false-rollback rate
+above the 5% a single evidence check would imply — this is a known, documented limitation, not a
+bug to work around by widening `non_inferiority_margin`. See
+[ADR-005](adr/005-evaluation-frequency-inflates-false-rollbacks.md) for the reasoning and the
+planned 0.2 fix. Until then, prefer fewer and larger evidence windows: set
+`EVIDENCEROLL_RECONCILE_INTERVAL_SECONDS` to the largest interval your label-delay SLA allows rather
+than the smallest one the system permits.
+
 ## Recommended service objectives
 
 These are starting objectives for an installation, not benchmark claims. Owners must replace them

@@ -103,6 +103,9 @@ python -m evidenceroll.cli simulate --scenario missing-feedback --reset
 
 # Shifted inputs: held before customer exposure
 python -m evidenceroll.cli simulate --scenario covariate-shift --reset
+
+# Selective feedback: held even though aggregate label coverage clears the floor
+python -m evidenceroll.cli simulate --scenario biased-feedback --reset
 ```
 
 The fixtures train real scikit-learn pipelines and send paired predictions through the same service,
@@ -121,8 +124,9 @@ python -m evidenceroll.cli benchmark --output benchmark-results.json
 | Labeled regression | rollback | rollback | promote |
 | Missing feedback | hold | hold | promote |
 | Covariate shift | hold | hold | promote |
+| Selective (biased) feedback | hold | hold | promote |
 
-Result on the deterministic corpus: EvidenceRoll `4/4`; HTTP-health-only baseline `1/4`. This is an
+Result on the deterministic corpus: EvidenceRoll `5/5`; HTTP-health-only baseline `1/5`. This is an
 acceptance benchmark over declared test cases, not evidence of universal superiority.
 
 ## Run the control plane
@@ -251,8 +255,9 @@ The repository's verification contract includes:
 
 - unit tests for policy, statistics, routing, registry and storage;
 - integration tests for API, feedback join and full state transitions;
-- four executable failure/acceptance scenarios;
+- five executable failure/acceptance scenarios, including selective (biased) feedback;
 - artifact tamper, audit-chain tamper, idempotency and concurrency tests;
+- background shadow-scoring, pending/failed-pair exclusion, and legacy-schema migration tests;
 - Ruff formatting/lint and strict mypy;
 - branch-aware coverage with an `88%` hard floor;
 - wheel/sdist build and dependency vulnerability audit;

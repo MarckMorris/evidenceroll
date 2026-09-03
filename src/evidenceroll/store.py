@@ -83,13 +83,16 @@ class SQLiteStore:
             release_stage TEXT NOT NULL,
             features_json TEXT NOT NULL,
             served_version TEXT NOT NULL,
-            champion_score REAL NOT NULL,
-            challenger_score REAL NOT NULL,
-            champion_prediction INTEGER NOT NULL,
-            challenger_prediction INTEGER NOT NULL,
-            champion_latency_ms REAL NOT NULL,
-            challenger_latency_ms REAL NOT NULL,
-            request_hash TEXT NOT NULL
+            champion_score REAL,
+            challenger_score REAL,
+            champion_prediction INTEGER,
+            challenger_prediction INTEGER,
+            champion_latency_ms REAL,
+            challenger_latency_ms REAL,
+            request_hash TEXT NOT NULL,
+            pending_role TEXT,
+            shadow_error TEXT,
+            completed_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_predictions_release_stage
             ON predictions(release_id, release_stage, observed_at);
@@ -113,6 +116,62 @@ class SQLiteStore:
         with self._connection() as connection:
             connection.executescript(statements)
             connection.commit()
+        self._migrate_pending_shadow_columns()
+
+    def _migrate_pending_shadow_columns(self) -> None:
+        """Rebuild a pre-background-scoring predictions table so the shadow side can be null."""
+        connection = sqlite3.connect(self.path, timeout=10.0)
+        connection.row_factory = sqlite3.Row
+        try:
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(predictions)").fetchall()
+            }
+            if not columns or "pending_role" in columns:
+                return
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.executescript(
+                """
+                BEGIN IMMEDIATE;
+                CREATE TABLE predictions_migrated (
+                    id TEXT PRIMARY KEY,
+                    release_id TEXT NOT NULL REFERENCES releases(id),
+                    entity_id TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    release_stage TEXT NOT NULL,
+                    features_json TEXT NOT NULL,
+                    served_version TEXT NOT NULL,
+                    champion_score REAL,
+                    challenger_score REAL,
+                    champion_prediction INTEGER,
+                    challenger_prediction INTEGER,
+                    champion_latency_ms REAL,
+                    challenger_latency_ms REAL,
+                    request_hash TEXT NOT NULL,
+                    pending_role TEXT,
+                    shadow_error TEXT,
+                    completed_at TEXT
+                );
+                INSERT INTO predictions_migrated
+                    (id, release_id, entity_id, observed_at, release_stage, features_json,
+                     served_version, champion_score, challenger_score, champion_prediction,
+                     challenger_prediction, champion_latency_ms, challenger_latency_ms,
+                     request_hash, pending_role, shadow_error, completed_at)
+                SELECT id, release_id, entity_id, observed_at, release_stage, features_json,
+                       served_version, champion_score, challenger_score, champion_prediction,
+                       challenger_prediction, champion_latency_ms, challenger_latency_ms,
+                       request_hash, NULL, NULL, observed_at
+                FROM predictions;
+                DROP TABLE predictions;
+                ALTER TABLE predictions_migrated RENAME TO predictions;
+                CREATE INDEX IF NOT EXISTS idx_predictions_release_stage
+                    ON predictions(release_id, release_stage, observed_at);
+                COMMIT;
+                """
+            )
+            connection.execute("PRAGMA foreign_keys = ON")
+        finally:
+            connection.close()
 
     def create_release(
         self,
@@ -231,8 +290,8 @@ class SQLiteStore:
                     (id, release_id, entity_id, observed_at, release_stage, features_json,
                      served_version, champion_score, challenger_score, champion_prediction,
                      challenger_prediction, champion_latency_ms, challenger_latency_ms,
-                     request_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     request_hash, pending_role, shadow_error, completed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         record.id,
                         record.release_id,
@@ -248,6 +307,9 @@ class SQLiteStore:
                         record.champion_latency_ms,
                         record.challenger_latency_ms,
                         record.request_hash,
+                        record.pending_role,
+                        record.shadow_error,
+                        None if record.pending_role else utc_now(),
                     ),
                 )
                 connection.commit()
@@ -264,6 +326,51 @@ class SQLiteStore:
         item = dict(row)
         item["features"] = json.loads(item.pop("features_json"))
         return item
+
+    def complete_shadow_score(
+        self,
+        prediction_id: str,
+        role: str,
+        score: float,
+        prediction: int,
+        latency_ms: float,
+    ) -> None:
+        """Attach the background-scored side of a pair; only a pending row can be completed."""
+        if role not in {"champion", "challenger"}:
+            raise ValueError(f"unknown scoring role: {role}")
+        query = f"""UPDATE predictions
+            SET {role}_score = ?, {role}_prediction = ?, {role}_latency_ms = ?,
+                pending_role = NULL, shadow_error = NULL, completed_at = ?
+            WHERE id = ? AND pending_role = ?"""
+        with self._write_lock, self._connection() as connection:
+            cursor = connection.execute(
+                query, (score, prediction, latency_ms, utc_now(), prediction_id, role)
+            )
+            if cursor.rowcount != 1:
+                raise NotFoundError(f"no prediction pending {role} scoring: {prediction_id}")
+            connection.commit()
+
+    def fail_shadow_score(self, prediction_id: str, message: str) -> None:
+        """Mark a pair as permanently incomplete so it never enters an evidence window."""
+        with self._write_lock, self._connection() as connection:
+            connection.execute(
+                "UPDATE predictions SET shadow_error = ? WHERE id = ? AND pending_role IS NOT NULL",
+                (message[:500], prediction_id),
+            )
+            connection.commit()
+
+    def incomplete_prediction_counts(self, release_id: str) -> dict[str, int]:
+        """Pairs excluded from evidence: still pending, or abandoned after a scoring failure."""
+        with self._connection() as connection:
+            row = connection.execute(
+                """SELECT
+                     SUM(CASE WHEN pending_role IS NOT NULL AND shadow_error IS NULL
+                              THEN 1 ELSE 0 END) AS pending,
+                     SUM(CASE WHEN shadow_error IS NOT NULL THEN 1 ELSE 0 END) AS failed
+                   FROM predictions WHERE release_id = ?""",
+                (release_id,),
+            ).fetchone()
+        return {"pending": int(row["pending"] or 0), "failed": int(row["failed"] or 0)}
 
     def add_feedback(self, prediction_id: str, label: int) -> bool:
         """Insert feedback; return True when the same feedback already existed."""
@@ -300,11 +407,14 @@ class SQLiteStore:
         return str(row["release_id"])
 
     def observations(self, release_id: str, stage: ReleaseStage) -> list[dict[str, Any]]:
+        """Complete pairs only: a half-scored request is not evidence about the release delta."""
         query = """
         SELECT p.*, f.label, f.observed_at AS feedback_at
         FROM predictions AS p
         LEFT JOIN feedback AS f ON f.prediction_id = p.id
         WHERE p.release_id = ? AND p.release_stage = ?
+          AND p.pending_role IS NULL AND p.shadow_error IS NULL
+          AND p.champion_score IS NOT NULL AND p.challenger_score IS NOT NULL
         ORDER BY p.observed_at, p.id
         """
         with self._connection() as connection:
